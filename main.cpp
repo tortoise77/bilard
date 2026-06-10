@@ -21,7 +21,7 @@ int main() {
 
     // Stała tarcia toczenia: dv/dt = -(v^2) * friction_const
     const float friction_const = 0.01f;
-    const float ball_stop_velocity = 5.0f;
+    const float ball_stop_velocity = 15.0f;
 
     const unsigned int WINDOW_W = 1366;
     const unsigned int WINDOW_H = 768;
@@ -29,15 +29,15 @@ int main() {
     window.setFramerateLimit(120);
 
     const float BOX_W = 800.0f;
-    const float BOX_H = 600.0f;
+    const float BOX_H = 400.0f;
     const float BOX_LEFT = (WINDOW_W - BOX_W) / 2.0f;
     const float BOX_TOP  = (WINDOW_H - BOX_H) / 2.0f;
 
     sf::RectangleShape box(sf::Vector2f(BOX_W, BOX_H));
     box.setPosition(BOX_LEFT, BOX_TOP);
-    box.setFillColor(sf::Color(139, 69, 19));
-    box.setOutlineColor(sf::Color(90, 45, 12));
-    box.setOutlineThickness(4.0f);
+    box.setFillColor(sf::Color(21, 88, 67));
+    box.setOutlineColor(sf::Color(88, 57, 39));
+    box.setOutlineThickness(6.0f);
 
     const float WALL_LEFT   = BOX_LEFT;
     const float WALL_RIGHT  = BOX_LEFT + BOX_W;
@@ -69,6 +69,23 @@ int main() {
         return min + static_cast<float>(std::rand()) / RAND_MAX * (max - min);
     };
 
+    const float CUE_LENGTH    = 320.0f;
+    const float CUE_THICKNESS = 8.0f;
+    const float CUE_MANIP_SPEED = 45.0f; // deg/s przy trzymaniu A lub S
+
+    // Podstawa kija (jej X przesuwa się A/S, Y stała – np. środek stołu)
+    sf::Vector2f cueBase((WALL_LEFT + WALL_RIGHT) / 2.0f,
+                         WALL_BOTTOM);
+
+    float cueAngleDeg = -90.f;
+
+    // Graficzny prostokąt kija: origin na lewym końcu (= podstawa)
+    sf::RectangleShape cueShape(sf::Vector2f(CUE_LENGTH, CUE_THICKNESS));
+    cueShape.setFillColor(sf::Color(160, 82, 45));   // brązowy kij
+    cueShape.setOrigin(0.0f, CUE_THICKNESS / 2.0f);
+
+    bool cueActive = true; // kij widoczny/aktywny gdy wszystkie kule stoją
+
     for (int i = 0; i < NUM_BALLS; ++i) {
         Ball b;
         b.radius = RADIUS;
@@ -96,9 +113,7 @@ int main() {
         }
         b.shape.setPosition(pos);
 
-        float angle = randf(0.0f, 2.0f * 3.14159265f);
-        float speed = randf(150.0f, 350.0f);
-        b.velocity = sf::Vector2f(std::cos(angle) * speed, std::sin(angle) * speed);
+        b.velocity = sf::Vector2f(0.f, 0.f);
 
         balls.push_back(b);
     }
@@ -106,6 +121,10 @@ int main() {
     sf::Clock clock;
 
     while (window.isOpen()) {
+
+        sf::Vector2i mp = sf::Mouse::getPosition(window);
+        sf::Vector2f mousePos(static_cast<float>(mp.x), static_cast<float>(mp.y));
+
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed)
@@ -113,6 +132,36 @@ int main() {
             if (event.type == sf::Event::KeyPressed &&
                 event.key.code == sf::Keyboard::Escape)
                 window.close();
+            // Uderzenie kijem po kliknięciu LMB
+            if (event.type == sf::Event::MouseButtonPressed &&
+                event.mouseButton.button == sf::Mouse::Left && cueActive)
+            {
+                sf::Vector2f mousePos(static_cast<float>(event.mouseButton.x),
+                                      static_cast<float>(event.mouseButton.y));
+
+                float cueAngleRad = cueAngleDeg * 3.14159265f / 180.f;
+                sf::Vector2f dir(std::cos(cueAngleRad), std::sin(cueAngleRad)); // od podstawy ku myszy
+
+                // Czubek kija to dokładnie pozycja myszy
+                sf::Vector2f tip = mousePos;
+
+                // Szukaj kuli najbliżej czubka
+                float bestDist = 1e9f;
+                Ball* hit = nullptr;
+                for (auto& b : balls) {
+                    sf::Vector2f d = b.shape.getPosition() - tip;
+                    float dist = std::sqrt(d.x*d.x + d.y*d.y);
+                    if (dist < bestDist) { bestDist = dist; hit = &b; }
+                }
+
+                // Uderz kulę jeśli czubek jest wystarczająco blisko
+                if (hit && bestDist < hit->radius + 15.0f) {
+                    // Losowa siła uderzenia z zakresu [300, 900] px/s
+                    float force = 300.0f + static_cast<float>(std::rand()) / RAND_MAX * 600.0f;
+                    hit->velocity = dir * force;
+                    cueActive = false; // chowamy kij podczas ruchu kul
+                }
+            }
         }
 
         float dt = clock.restart().asSeconds();
@@ -175,6 +224,9 @@ int main() {
                     balls[i].shape.setPosition(pi);
                     balls[j].shape.setPosition(pj);
 
+                    // Kule "zamienają się" pędami.
+                    // Mają tą samą masę, więc zamieniają się jedynie prędkościami
+
                     vector<float> u1 = {balls[i].velocity.x, balls[i].velocity.y};
                     vector<float> u2 = {balls[j].velocity.x, balls[j].velocity.y};
 
@@ -186,10 +238,39 @@ int main() {
             }
         }
 
+        if (!cueActive) {
+            bool allStopped = true;
+            for (const auto& b : balls)
+                if (b.velocity.x != 0.0f || b.velocity.y != 0.0f)
+                { allStopped = false; break; }
+            if (allStopped) cueActive = true;
+        }
+
+        if (cueActive) {
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::A))
+                cueAngleDeg += CUE_MANIP_SPEED * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::S))
+                cueAngleDeg -= CUE_MANIP_SPEED * dt;
+
+            float cueAngleRad = cueAngleDeg * 3.14159265f / 180.f;
+
+            // dir: od podstawy w stronę czubka (myszy)
+            sf::Vector2f dir(std::cos(cueAngleRad), std::sin(cueAngleRad));
+
+            // Czubek = mysz → podstawa jest "za" myszą o CUE_LENGTH
+            sf::Vector2f cueBasePos = mousePos - dir * CUE_LENGTH;
+
+            // Shape ma origin przy lewym końcu → ustaw przy podstawie, obróć o cueAngleDeg
+            cueShape.setPosition(cueBasePos);
+            cueShape.setRotation(cueAngleDeg);
+        }
+
         window.clear(sf::Color(30, 30, 30));
         window.draw(box);
         for (auto& b : balls)
             window.draw(b.shape);
+        if (cueActive)
+            window.draw(cueShape);
         window.display();
     }
 
