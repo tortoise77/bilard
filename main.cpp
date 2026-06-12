@@ -15,6 +15,11 @@ int main() {
     sf::RenderWindow window(sf::VideoMode(WINDOW_W, WINDOW_H), "Bilard - Zaliczenie");
     window.setFramerateLimit(120);
 
+    // KONTROLA WIDOKU - Pozwala na obrót stołu niezależnie od interfejsu (UI)
+    sf::View gameView(sf::FloatRect(0, 0, WINDOW_W, WINDOW_H));
+    sf::View uiView = window.getDefaultView();
+    bool isRotated = false;
+
     // wczytanie systemowej czcionki
     sf::Font font;
     font.loadFromFile("C:/Windows/Fonts/arial.ttf");
@@ -31,7 +36,7 @@ int main() {
     controlsText.setFont(font);
     controlsText.setCharacterSize(20);
     controlsText.setFillColor(sf::Color(200, 200, 200));
-    controlsText.setString("[F5] Zapisz gre   |   [F9] Wczytaj gre   |   [F6] Zapisz wyniki   |   [ESC] Wyjscie");
+    controlsText.setString("[F3] Obroc stol   |   [F5] Zapisz gre   |   [F9] Wczytaj gre   |   [F6] Zapisz wyniki   |   [ESC] Wyjscie");
     controlsText.setPosition(20.f, WINDOW_H - 40.f);
 
     // tekst powiadomień systemowych
@@ -97,7 +102,9 @@ int main() {
 
     sf::Clock clock;
     while (window.isOpen()) {
-        sf::Vector2f mPos(sf::Mouse::getPosition(window).x, sf::Mouse::getPosition(window).y);
+        // Poprawka dla zmapowania kursora myszy przy obróconym stole
+        sf::Vector2i pixelPos = sf::Mouse::getPosition(window);
+        sf::Vector2f mPos = window.mapPixelToCoords(pixelPos, gameView);
 
         // namierzanie bili pod myszką
         if (cueActive && !isCharging) {
@@ -121,15 +128,23 @@ int main() {
         while (window.pollEvent(e)) {
             if (e.type == sf::Event::Closed || (e.type == sf::Event::KeyPressed && e.key.code == sf::Keyboard::Escape)) window.close();
 
-            // zapis oraz odczyt (F5, F9, F6) z informacją na ekranie
+            // Klawiszologia specjalna
             if (e.type == sf::Event::KeyPressed) {
+                // Obrót stołu o 180 stopni (F3)
+                if (e.key.code == sf::Keyboard::F3) {
+                    isRotated = !isRotated;
+                    gameView.setRotation(isRotated ? 180.f : 0.f);
+                    currentNotif = isRotated ? "Widok obrocony o 180 stopni!" : "Widok domyslny przywrocony!";
+                    notifClock.restart();
+                }
+
+                // zapis oraz odczyt (F5, F9, F6) z informacją na ekranie
                 if (e.key.code == sf::Keyboard::F5) {
                     std::ofstream out("save.txt");
                     out << currentPlayerIdx << " " << players[0].score << " " << players[1].score << "\n";
                     for (const auto& obj : objects) if (Ball* b = dynamic_cast<Ball*>(obj.get()))
                             out << "B " << b->getPosition().x << " " << b->getPosition().y << " " << b->getVelocity().x << " " << b->getVelocity().y << " " << b->getColor().toInteger() << "\n";
 
-                    // wyswietlanie komunikatu na ekranie
                     currentNotif = "Pomyslnie zapisano stan gry!";
                     notifClock.restart();
                 }
@@ -250,12 +265,11 @@ int main() {
             if (allStopped) {
                 cueActive = true;
 
-                // mechanika tur: jeśli gracz nic nie wbił zmienia się tura
                 int ballsAfterShot = 0;
                 for (const auto& obj : objects) if (dynamic_cast<Ball*>(obj.get())) ballsAfterShot++;
 
                 if (ballsAfterShot == ballsBeforeShot) {
-                    currentPlayerIdx = (currentPlayerIdx + 1) % 2; // zmiana gracza 0 na 1 i odwrotnie
+                    currentPlayerIdx = (currentPlayerIdx + 1) % 2;
                 }
             }
         }
@@ -264,7 +278,7 @@ int main() {
         if (cueActive && ballsCount == 0) uiText.setString("KONIEC GRY! Wygrywa: " + players[(players[0].score > players[1].score ? 0 : 1)].name);
         else uiText.setString("Tura: " + players[currentPlayerIdx].name + " | " + players[0].name + ": " + to_string(players[0].score) + " | " + players[1].name + ": " + to_string(players[1].score));
 
-        // celowanie i rysowanie kija na stole
+        // celowanie i ustalanie pozycji kija
         if (cueActive) {
             Ball* target = isCharging ? aimedBall : hoveredBall;
             if (target) {
@@ -282,16 +296,63 @@ int main() {
             }
         }
 
+        // --- SEKCJA RYSOWANIA ---
         window.clear(sf::Color(30, 30, 30));
+
+        // 1. Rysowanie środowiska gry (korzystając z gameView dla obrotów stołu)
+        window.setView(gameView);
         for (auto& obj : objects) obj->draw(window);
 
+        // rysowanie kija i wskaźnika trajektorii
         if (cueActive && (isCharging ? aimedBall : hoveredBall) != nullptr) {
+            Ball* target = isCharging ? aimedBall : hoveredBall;
+            float rad = cueAngleDeg * 3.14159f / 180.f;
+            sf::Vector2f dir(std::cos(rad), std::sin(rad));
+
+            // Linia trajektorii uderzenia (częściowo transparentna do wyznaczenia kierunku)
+            sf::VertexArray trajectory(sf::Lines, 2);
+            trajectory[0].position = target->getPosition() + dir * RADIUS;
+            trajectory[0].color = sf::Color(255, 255, 255, 120);
+            trajectory[1].position = target->getPosition() + dir * 300.0f; // linia sięga w przód
+            trajectory[1].color = sf::Color(255, 255, 255, 0); // zanika na końcu
+
+            window.draw(trajectory);
             window.draw(cueShape);
         }
 
-        window.draw(uiText);
+        // 2. Rysowanie interfejsu 2D (korzystając ze stałego uiView)
+        window.setView(uiView);
 
-        // rysowanie paska menu ze sterowaniem na stałe
+        // Paski postępu graczy
+        float winThreshold = config.numBalls / 2.0f + 0.5f; // Szacowany próg wymagany do wygrania w oparciu o sumę kul
+        float p1Ratio = std::min(1.0f, players[0].score / winThreshold);
+        float p2Ratio = std::min(1.0f, players[1].score / winThreshold);
+
+        // Tło pasków
+        sf::RectangleShape p1BarBg(sf::Vector2f(200.f, 8.f));
+        p1BarBg.setPosition(20.f, 55.f);
+        p1BarBg.setFillColor(sf::Color(60, 60, 60));
+
+        sf::RectangleShape p2BarBg(sf::Vector2f(200.f, 8.f));
+        p2BarBg.setPosition(320.f, 55.f);
+        p2BarBg.setFillColor(sf::Color(60, 60, 60));
+
+        // Paski wypełnienia
+        sf::RectangleShape p1Bar(sf::Vector2f(200.f * p1Ratio, 8.f));
+        p1Bar.setPosition(20.f, 55.f);
+        p1Bar.setFillColor(sf::Color(100, 150, 255)); // Kolor Gracz 1
+
+        sf::RectangleShape p2Bar(sf::Vector2f(200.f * p2Ratio, 8.f));
+        p2Bar.setPosition(320.f, 55.f);
+        p2Bar.setFillColor(sf::Color(255, 100, 100)); // Kolor Gracz 2
+
+        window.draw(p1BarBg);
+        window.draw(p1Bar);
+        window.draw(p2BarBg);
+        window.draw(p2Bar);
+
+        // Teksty
+        window.draw(uiText);
         window.draw(controlsText);
 
         // znikające powiadomienia na dole ekranu
@@ -303,6 +364,4 @@ int main() {
         window.display();
     }
     return 0;
-}// Implementacja klasy Player i mechaniki Tur 
-// Naciaganie sily uderzenia
-// Ostateczna wersja
+}
