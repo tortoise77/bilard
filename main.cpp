@@ -304,3 +304,4 @@ int main() {
     }
     return 0;
 }// Implementacja klasy Player i mechaniki Tur 
+// Naciaganie sily uderzenia 
