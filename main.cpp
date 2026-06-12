@@ -236,23 +236,41 @@ int main() {
             } else ++it;
         }
 
-        // zderzenia bil
-        for (size_t i = 0; i < objects.size(); ++i) {
-            Ball* b1 = dynamic_cast<Ball*>(objects[i].get());
-            if (!b1) continue;
-            for (size_t j = i + 1; j < objects.size(); ++j) {
-                Ball* b2 = dynamic_cast<Ball*>(objects[j].get());
-                if (!b2) continue;
-                sf::Vector2f p1 = b1->getPosition(), p2 = b2->getPosition();
+        // zderzenia bil - optymalizacja przez sortowanie po osi X
+        // zbieramy wskaźniki do kul i sortujemy po pozycji X
+        std::vector<Ball*> balls;
+        for (auto& obj : objects)
+            if (Ball* b = dynamic_cast<Ball*>(obj.get()))
+                balls.push_back(b);
+
+        std::sort(balls.begin(), balls.end(), [](Ball* a, Ball* b) {
+            return a->getPosition().x < b->getPosition().x;
+        });
+
+        // dla każdej kuli sprawdzamy tylko te najbliższe, których środek mieści się
+        // w odległości < 2*RADIUS na osi X — dalsze kule nie mogą się stykać
+        const float DIAMETER = 2.0f * RADIUS;
+        for (size_t i = 0; i < balls.size(); ++i) {
+            Ball* b1 = balls[i];
+            sf::Vector2f p1 = b1->getPosition();
+            for (size_t j = i + 1; j < balls.size(); ++j) {
+                Ball* b2 = balls[j];
+                sf::Vector2f p2 = b2->getPosition();
+
+                // jeśli różnica X przekracza średnicę, dalsze kule też nie dosięgną
+                if (p2.x - p1.x >= DIAMETER) break;
+
                 float dist = std::hypot(p2.x - p1.x, p2.y - p1.y);
-                if (dist < 50.0f && dist > 0.0001f) {
-                    float shift = (50.0f - dist) / 2.0f;
+                if (dist < DIAMETER && dist > 0.0001f) {
+                    float shift = (DIAMETER - dist) / 2.0f;
                     float nx = (p2.x - p1.x) / dist, ny = (p2.y - p1.y) / dist;
                     b1->setPosition(sf::Vector2f(p1.x - nx * shift, p1.y - ny * shift));
                     b2->setPosition(sf::Vector2f(p2.x + nx * shift, p2.y + ny * shift));
                     sf::Vector2f v1 = b1->getVelocity();
                     b1->setVelocity(b2->getVelocity());
                     b2->setVelocity(v1);
+                    // odświeżamy p1 po przesunięciu
+                    p1 = b1->getPosition();
                 }
             }
         }
