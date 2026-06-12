@@ -6,7 +6,7 @@ HEADERS += GameObjects.h \
     GameObjects.h
 SOURCES += main.cpp GameObjects.cpp
 
-SFML_PATH = "C:/Users/Maciej/Desktop/projekt/SFML-2.6.1"
+SFML_PATH = $$PWD/SFML-2.6.2-windows-gcc-13.1.0-mingw-64-bit/SFML-2.6.2
 INCLUDEPATH += "$$SFML_PATH/include"
 LIBS += -L"$$SFML_PATH/lib"
 
